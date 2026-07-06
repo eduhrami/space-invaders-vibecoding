@@ -82,6 +82,14 @@
     font-size: 12px;
     color: #0a0;
   }
+  #powerupBar {
+    display: none;
+    margin-top: 6px;
+    font-size: 14px;
+    color: #ff8800;
+    text-shadow: 0 0 8px #ff6600;
+    letter-spacing: 1px;
+  }
 </style>
 </head>
 <body>
@@ -92,6 +100,7 @@
     <div>NIVEL: <span id="level">1</span></div>
   </div>
   <canvas id="game" width="600" height="600"></canvas>
+  <div id="powerupBar"></div>
   <div id="hint">← → mover · ESPACIO disparar · P pausa</div>
 </div>
 
@@ -145,6 +154,8 @@ document.addEventListener('keyup', e => keys[e.code] = false);
 // --- Bullets ---
 let playerBullets = [];
 let alienBullets = [];
+const NORMAL_BULLET_SPEED = 9;
+const NORMAL_BULLET_DMG = 2;
 
 // --- Aliens ---
 let aliens = [];
@@ -155,6 +166,70 @@ const alienRows = 5;
 const alienCols = 10;
 const alienW = 30, alienH = 20, alienPad = 12;
 const alienColors = ['#ff5555', '#ffaa00', '#ffff55', '#55ff55', '#55aaff'];
+const ALIEN_HP = NORMAL_BULLET_DMG; // un disparo normal siempre mata en un golpe
+let rowCleared = []; // marca por fila si ya soltó su item de bonus
+
+// --- Sistema de items sorpresa (power-ups) ---
+// Cada entrada define cómo se ve el item al caer y qué efecto aplica al
+// recogerlo. Para agregar un item nuevo basta con sumar una entrada aquí
+// y (si necesita comportamiento propio, como las balas de fuego) leer
+// `activeEffects.<id>` donde corresponda.
+const ITEM_TYPES = {
+  fireBullet: {
+    label: '🔥 Balas de fuego',
+    color: '#ff6600',
+    icon: '🔥',
+    duration: 480, // ~8s a 60fps
+    onPickup(effects, def) {
+      effects.fireBullet = { timeLeft: def.duration, label: def.label };
+    }
+  }
+};
+
+// Efecto de las balas de fuego: más lentas, hacen menos daño directo pero
+// incendian al enemigo, que se va quemando poco a poco.
+const FIRE_BULLET_SPEED = 5;
+const FIRE_BULLET_DMG = 0;
+const FIRE_BURN_DMG_PER_TICK = 1;
+const FIRE_BURN_TICKS = 3;
+const FIRE_TICK_INTERVAL = 18; // frames entre cada "mordida" de fuego
+
+let activeEffects = {}; // efectos activos del jugador, keyed por id de item
+let fallingItems = []; // items cayendo, esperando a ser recogidos
+
+function pickRandomItemType() {
+  const ids = Object.keys(ITEM_TYPES);
+  return ids[Math.floor(Math.random() * ids.length)];
+}
+
+function spawnItemDrop(rowAliens) {
+  const avgX = rowAliens.reduce((sum, a) => sum + a.x + a.w / 2, 0) / rowAliens.length;
+  const y = rowAliens[0].y;
+  fallingItems.push({
+    x: avgX - 12, y, w: 24, h: 24,
+    vy: 2.2,
+    spin: 0,
+    typeId: pickRandomItemType()
+  });
+}
+
+function checkRowClear(row) {
+  if (rowCleared[row]) return;
+  const rowAliens = aliens.filter(a => a.row === row);
+  if (rowAliens.length > 0 && rowAliens.every(a => !a.alive)) {
+    rowCleared[row] = true;
+    spawnItemDrop(rowAliens);
+  }
+}
+
+function killAlien(a) {
+  if (!a.alive) return;
+  a.alive = false;
+  a.burning = false;
+  score += (alienRows - a.row) * 10;
+  updateHud();
+  checkRowClear(a.row);
+}
 
 function buildAliens() {
   aliens = [];
@@ -167,12 +242,18 @@ function buildAliens() {
         w: alienW, h: alienH,
         alive: true,
         row: r,
-        anim: 0
+        anim: 0,
+        hp: ALIEN_HP,
+        burning: false,
+        burnTimer: 0,
+        burnTicksLeft: 0
       });
     }
   }
   alienDir = 1;
   alienSpeed = 1 + (level - 1) * 0.4;
+  rowCleared = new Array(alienRows).fill(false);
+  fallingItems = [];
 }
 
 // --- Barriers (shields) ---
@@ -216,6 +297,7 @@ function resetGame() {
   player.x = W/2 - player.w/2;
   playerBullets = [];
   alienBullets = [];
+  activeEffects = {};
   buildAliens();
   buildBarriers();
   updateHud();
@@ -267,19 +349,59 @@ function update() {
   if (keys['ArrowRight']) player.x += player.speed;
   player.x = Math.max(0, Math.min(W - player.w, player.x));
 
+  // efectos activos del jugador (power-ups): cuenta regresiva y expiración
+  Object.keys(activeEffects).forEach(id => {
+    activeEffects[id].timeLeft--;
+    if (activeEffects[id].timeLeft <= 0) delete activeEffects[id];
+  });
+
   // shooting
   if (player.cooldown > 0) player.cooldown--;
   if (keys['Space'] && player.cooldown <= 0) {
-    playerBullets.push({ x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 12 });
+    const fireActive = !!activeEffects.fireBullet;
+    playerBullets.push({
+      x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 12,
+      vy: fireActive ? FIRE_BULLET_SPEED : NORMAL_BULLET_SPEED,
+      dmg: fireActive ? FIRE_BULLET_DMG : NORMAL_BULLET_DMG,
+      fire: fireActive
+    });
     player.cooldown = 15;
   }
 
   // move bullets
-  playerBullets.forEach(b => b.y -= 9);
+  playerBullets.forEach(b => b.y -= b.vy);
   playerBullets = playerBullets.filter(b => b.y + b.h > 0);
 
   alienBullets.forEach(b => b.y += 5 + level*0.3);
   alienBullets = alienBullets.filter(b => b.y < H);
+
+  // items sorpresa cayendo
+  fallingItems.forEach(item => {
+    item.y += item.vy;
+    item.spin += 0.08;
+    if (rectHit(item, player)) {
+      item.caught = true;
+      const def = ITEM_TYPES[item.typeId];
+      if (def && def.onPickup) def.onPickup(activeEffects, def);
+    }
+  });
+  fallingItems = fallingItems.filter(item => !item.caught && item.y < H);
+
+  // quemadura: los insectos/monstruos encendidos pierden vida poco a poco
+  aliens.forEach(a => {
+    if (!a.alive || !a.burning) return;
+    a.burnTimer++;
+    if (a.burnTimer >= FIRE_TICK_INTERVAL) {
+      a.burnTimer = 0;
+      a.hp -= FIRE_BURN_DMG_PER_TICK;
+      a.burnTicksLeft--;
+      if (a.hp <= 0) {
+        killAlien(a);
+      } else if (a.burnTicksLeft <= 0) {
+        a.burning = false;
+      }
+    }
+  });
 
   // move aliens
   let aliveAliens = aliens.filter(a => a.alive);
@@ -318,13 +440,18 @@ function update() {
 
   // collisions: player bullets vs aliens
   playerBullets.forEach(b => {
+    if (b.hit) return;
     aliens.forEach(a => {
-      if (!a.alive) return;
+      if (!a.alive || b.hit) return;
       if (rectHit(b, a)) {
-        a.alive = false;
         b.hit = true;
-        score += (alienRows - a.row) * 10;
-        updateHud();
+        if (b.fire) {
+          a.burning = true;
+          a.burnTimer = 0;
+          a.burnTicksLeft = FIRE_BURN_TICKS;
+        }
+        a.hp -= b.dmg;
+        if (a.hp <= 0) killAlien(a);
       }
     });
   });
@@ -417,8 +544,10 @@ function draw() {
   drawPlayer();
 
   // player bullets
-  ctx.fillStyle = '#0ff';
-  playerBullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+  playerBullets.forEach(b => {
+    ctx.fillStyle = b.fire ? '#ff6600' : '#0ff';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+  });
 
   // alien bullets
   ctx.fillStyle = '#f0f';
@@ -430,6 +559,9 @@ function draw() {
     drawAlien(a);
   });
 
+  // items sorpresa cayendo
+  fallingItems.forEach(drawFallingItem);
+
   // barriers
   barriers.forEach(blocks => {
     ctx.fillStyle = '#0f0';
@@ -437,6 +569,39 @@ function draw() {
       if (b.alive) ctx.fillRect(b.x, b.y, b.w, b.h);
     });
   });
+
+  updatePowerupHud();
+}
+
+function drawFallingItem(item) {
+  const def = ITEM_TYPES[item.typeId];
+  const cx = item.x + item.w/2, cy = item.y + item.h/2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(Math.sin(item.spin) * 0.2);
+  ctx.shadowColor = def.color;
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = def.color;
+  ctx.beginPath();
+  ctx.arc(0, 0, item.w/2, 0, Math.PI*2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.font = (item.w*0.7) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(def.icon, 0, 1);
+  ctx.restore();
+}
+
+function updatePowerupHud() {
+  const el = document.getElementById('powerupBar');
+  if (activeEffects.fireBullet) {
+    const secs = Math.ceil(activeEffects.fireBullet.timeLeft / 60);
+    el.textContent = activeEffects.fireBullet.label + ': ' + secs + 's';
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
 }
 
 function drawPlayer() {
@@ -774,7 +939,24 @@ function drawAlien(a) {
   ctx.save();
   ctx.translate(cx, cy);
   drawer(w, h, wobble, color);
+  if (a.burning) drawBurnOverlay(w, h);
   ctx.restore();
+}
+
+function drawBurnOverlay(w, h) {
+  for (let i = 0; i < 3; i++) {
+    const fx = (Math.random() - 0.5) * w * 0.7;
+    const fy = (Math.random() - 0.5) * h * 0.7;
+    ctx.globalAlpha = 0.55 + Math.random() * 0.35;
+    ctx.fillStyle = Math.random() > 0.5 ? '#ff8800' : '#ffcf3f';
+    ctx.beginPath();
+    ctx.moveTo(fx, fy + h*0.16);
+    ctx.lineTo(fx - w*0.07, fy - h*0.14);
+    ctx.lineTo(fx + w*0.07, fy - h*0.14);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function loop() {
