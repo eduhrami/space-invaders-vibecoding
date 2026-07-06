@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Space Invaders</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Courier New', monospace;
+    color: #0f0;
+    overflow: hidden;
+  }
+  #wrap {
+    text-align: center;
+  }
+  canvas {
+    background: #000;
+    border: 2px solid #0f0;
+    box-shadow: 0 0 20px #0f0;
+    image-rendering: pixelated;
+  }
+  #hud {
+    display: flex;
+    justify-content: space-between;
+    width: 600px;
+    margin: 0 auto 8px auto;
+    font-size: 20px;
+    letter-spacing: 2px;
+  }
+  #overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+    z-index: 10;
+  }
+  #overlay h1 {
+    font-size: 40px;
+    text-shadow: 0 0 10px #0f0;
+  }
+  #overlay p {
+    font-size: 16px;
+  }
+  button {
+    background: #000;
+    color: #0f0;
+    border: 2px solid #0f0;
+    padding: 10px 20px;
+    font-family: inherit;
+    font-size: 16px;
+    cursor: pointer;
+    margin-top: 15px;
+  }
+  button:hover {
+    background: #0f0;
+    color: #000;
+  }
+  #hint {
+    margin-top: 10px;
+    font-size: 12px;
+    color: #0a0;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div>PUNTOS: <span id="score">0</span></div>
+    <div>VIDAS: <span id="lives">3</span></div>
+    <div>NIVEL: <span id="level">1</span></div>
+  </div>
+  <canvas id="game" width="600" height="600"></canvas>
+  <div id="hint">← → mover · ESPACIO disparar · P pausa</div>
+</div>
+
+<div id="overlay">
+  <h1 id="overlayTitle">SPACE INVADERS</h1>
+  <p id="overlaySub">Defiende la Tierra de la invasión alienígena</p>
+  <button id="startBtn">JUGAR</button>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const levelEl = document.getElementById('level');
+const overlay = document.getElementById('overlay');
+const overlayTitle = document.getElementById('overlayTitle');
+const overlaySub = document.getElementById('overlaySub');
+const startBtn = document.getElementById('startBtn');
+
+let state = 'idle'; // idle, playing, paused, gameover, win
+let score = 0;
+let lives = 3;
+let level = 1;
+
+// --- Player ---
+const player = {
+  w: 40, h: 20,
+  x: W/2 - 20, y: H - 50,
+  speed: 6,
+  cooldown: 0
+};
+
+let keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  if (e.code === 'KeyP' && state === 'playing') { state = 'paused'; showOverlay('PAUSA', 'Presiona P para continuar', false); }
+  else if (e.code === 'KeyP' && state === 'paused') { state = 'playing'; hideOverlay(); }
+});
+document.addEventListener('keyup', e => keys[e.code] = false);
+
+// --- Bullets ---
+let playerBullets = [];
+let alienBullets = [];
+
+// --- Aliens ---
+let aliens = [];
+let alienDir = 1;
+let alienSpeed = 1;
+let alienDropTimer = 0;
+const alienRows = 5;
+const alienCols = 10;
+const alienW = 30, alienH = 20, alienPad = 12;
+const alienColors = ['#ff5555', '#ffaa00', '#ffff55', '#55ff55', '#55aaff'];
+
+function buildAliens() {
+  aliens = [];
+  const startX = (W - (alienCols * (alienW + alienPad) - alienPad)) / 2;
+  for (let r = 0; r < alienRows; r++) {
+    for (let c = 0; c < alienCols; c++) {
+      aliens.push({
+        x: startX + c * (alienW + alienPad),
+        y: 60 + r * (alienH + alienPad),
+        w: alienW, h: alienH,
+        alive: true,
+        row: r,
+        anim: 0
+      });
+    }
+  }
+  alienDir = 1;
+  alienSpeed = 1 + (level - 1) * 0.4;
+}
+
+// --- Barriers (shields) ---
+let barriers = [];
+function buildBarriers() {
+  barriers = [];
+  const count = 4;
+  const bw = 60, bh = 40;
+  const spacing = W / count;
+  for (let i = 0; i < count; i++) {
+    const bx = spacing * i + spacing/2 - bw/2;
+    const by = H - 140;
+    // build as grid of blocks
+    const block = 6;
+    const blocks = [];
+    for (let row = 0; row < bh/block; row++) {
+      for (let col = 0; col < bw/block; col++) {
+        // shape: skip bottom middle to look like a bunker
+        if (row > (bh/block - 3) && col > 2 && col < (bw/block - 3)) continue;
+        blocks.push({ x: bx + col*block, y: by + row*block, w: block, h: block, alive: true });
+      }
+    }
+    barriers.push(blocks);
+  }
+}
+
+// --- Stars background ---
+let stars = [];
+function buildStars() {
+  stars = [];
+  for (let i = 0; i < 80; i++) {
+    stars.push({ x: Math.random()*W, y: Math.random()*H, r: Math.random()*1.5, s: Math.random()*0.5 + 0.1 });
+  }
+}
+buildStars();
+
+function resetGame() {
+  score = 0;
+  lives = 3;
+  level = 1;
+  player.x = W/2 - player.w/2;
+  playerBullets = [];
+  alienBullets = [];
+  buildAliens();
+  buildBarriers();
+  updateHud();
+}
+
+function nextLevel() {
+  level++;
+  playerBullets = [];
+  alienBullets = [];
+  buildAliens();
+  buildBarriers();
+  updateHud();
+}
+
+function updateHud() {
+  scoreEl.textContent = score;
+  livesEl.textContent = lives;
+  levelEl.textContent = level;
+}
+
+function showOverlay(title, sub, showBtn = true) {
+  overlayTitle.textContent = title;
+  overlaySub.textContent = sub;
+  startBtn.style.display = showBtn ? 'inline-block' : 'none';
+  overlay.style.display = 'flex';
+}
+function hideOverlay() {
+  overlay.style.display = 'none';
+}
+
+startBtn.addEventListener('click', () => {
+  if (state === 'gameover' || state === 'win' || state === 'idle') {
+    resetGame();
+  }
+  state = 'playing';
+  hideOverlay();
+});
+
+showOverlay('SPACE INVADERS', 'Defiende la Tierra de la invasión alienígena');
+
+// --- Game loop ---
+function update() {
+  if (state !== 'playing') return;
+
+  // player movement
+  if (keys['ArrowLeft']) player.x -= player.speed;
+  if (keys['ArrowRight']) player.x += player.speed;
+  player.x = Math.max(0, Math.min(W - player.w, player.x));
+
+  // shooting
+  if (player.cooldown > 0) player.cooldown--;
+  if (keys['Space'] && player.cooldown <= 0) {
+    playerBullets.push({ x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 12 });
+    player.cooldown = 15;
+  }
+
+  // move bullets
+  playerBullets.forEach(b => b.y -= 9);
+  playerBullets = playerBullets.filter(b => b.y + b.h > 0);
+
+  alienBullets.forEach(b => b.y += 5 + level*0.3);
+  alienBullets = alienBullets.filter(b => b.y < H);
+
+  // move aliens
+  let aliveAliens = aliens.filter(a => a.alive);
+  let edgeHit = false;
+  aliveAliens.forEach(a => {
+    if (a.x + a.w >= W && alienDir > 0) edgeHit = true;
+    if (a.x <= 0 && alienDir < 0) edgeHit = true;
+  });
+
+  const speedFactor = 1 + (1 - aliveAliens.length / (alienRows*alienCols)) * 2;
+  aliens.forEach(a => {
+    if (!a.alive) return;
+    a.x += alienDir * alienSpeed * speedFactor;
+    a.anim += 0.05;
+  });
+
+  if (edgeHit) {
+    alienDir *= -1;
+    aliens.forEach(a => { if (a.alive) a.y += 16; });
+  }
+
+  // aliens reach player -> game over
+  aliveAliens.forEach(a => {
+    if (a.y + a.h >= player.y) {
+      endGame(false);
+    }
+  });
+
+  // alien shooting
+  alienDropTimer++;
+  const fireChance = 0.015 + level * 0.003;
+  if (aliveAliens.length > 0 && Math.random() < fireChance) {
+    const shooter = aliveAliens[Math.floor(Math.random()*aliveAliens.length)];
+    alienBullets.push({ x: shooter.x + shooter.w/2 - 2, y: shooter.y + shooter.h, w: 4, h: 12 });
+  }
+
+  // collisions: player bullets vs aliens
+  playerBullets.forEach(b => {
+    aliens.forEach(a => {
+      if (!a.alive) return;
+      if (rectHit(b, a)) {
+        a.alive = false;
+        b.hit = true;
+        score += (alienRows - a.row) * 10;
+        updateHud();
+      }
+    });
+  });
+  playerBullets = playerBullets.filter(b => !b.hit);
+
+  // collisions: player bullets vs barriers
+  playerBullets.forEach(b => {
+    barriers.forEach(blocks => {
+      blocks.forEach(block => {
+        if (!block.alive) return;
+        if (rectHit(b, block)) {
+          block.alive = false;
+          b.hit = true;
+        }
+      });
+    });
+  });
+  playerBullets = playerBullets.filter(b => !b.hit);
+
+  // collisions: alien bullets vs barriers
+  alienBullets.forEach(b => {
+    barriers.forEach(blocks => {
+      blocks.forEach(block => {
+        if (!block.alive) return;
+        if (rectHit(b, block)) {
+          block.alive = false;
+          b.hit = true;
+        }
+      });
+    });
+  });
+  alienBullets = alienBullets.filter(b => !b.hit);
+
+  // collisions: alien bullets vs player
+  alienBullets.forEach(b => {
+    if (rectHit(b, player)) {
+      b.hit = true;
+      lives--;
+      updateHud();
+      if (lives <= 0) {
+        endGame(false);
+      }
+    }
+  });
+  alienBullets = alienBullets.filter(b => !b.hit);
+
+  // win condition
+  if (aliveAliens.length === 0 && state === 'playing') {
+    if (level >= 5) {
+      endGame(true);
+    } else {
+      state = 'levelup';
+      showOverlay('¡NIVEL ' + level + ' SUPERADO!', 'Preparando nivel ' + (level+1) + '...', false);
+      setTimeout(() => {
+        nextLevel();
+        state = 'playing';
+        hideOverlay();
+      }, 1800);
+    }
+  }
+}
+
+function rectHit(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function endGame(won) {
+  state = won ? 'win' : 'gameover';
+  if (won) {
+    showOverlay('¡GANASTE!', 'Puntaje final: ' + score);
+  } else {
+    showOverlay('GAME OVER', 'Puntaje final: ' + score);
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  // stars
+  ctx.fillStyle = '#fff';
+  stars.forEach(s => {
+    s.y += s.s;
+    if (s.y > H) s.y = 0;
+    ctx.globalAlpha = 0.6;
+    ctx.fillRect(s.x, s.y, s.r, s.r);
+  });
+  ctx.globalAlpha = 1;
+
+  // player
+  drawPlayer();
+
+  // player bullets
+  ctx.fillStyle = '#0ff';
+  playerBullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+  // alien bullets
+  ctx.fillStyle = '#f0f';
+  alienBullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+  // aliens
+  aliens.forEach(a => {
+    if (!a.alive) return;
+    drawAlien(a);
+  });
+
+  // barriers
+  barriers.forEach(blocks => {
+    ctx.fillStyle = '#0f0';
+    blocks.forEach(b => {
+      if (b.alive) ctx.fillRect(b.x, b.y, b.w, b.h);
+    });
+  });
+}
+
+function drawPlayer() {
+  ctx.fillStyle = '#0f0';
+  const x = player.x, y = player.y, w = player.w, h = player.h;
+  ctx.fillRect(x, y + h*0.5, w, h*0.5);
+  ctx.fillRect(x + w*0.4, y, w*0.2, h*0.5);
+  ctx.fillRect(x + w*0.1, y + h*0.3, w*0.15, h*0.3);
+  ctx.fillRect(x + w*0.75, y + h*0.3, w*0.15, h*0.3);
+}
+
+function drawLegs(w, h, pairs, spread, wobble) {
+  ctx.beginPath();
+  const legAngle = wobble ? 1 : -1;
+  for (let i = 0; i < pairs; i++) {
+    const t = pairs === 1 ? 0 : (i / (pairs - 1)) * 2 - 1; // -1..1
+    const legY = t * h * spread;
+    const kick = (i % 2 === 0 ? legAngle : -legAngle) * h * 0.1;
+    ctx.moveTo(-w*0.14, legY);
+    ctx.lineTo(-w*0.6, legY + kick);
+    ctx.moveTo(w*0.14, legY);
+    ctx.lineTo(w*0.6, legY + kick);
+  }
+  ctx.stroke();
+}
+
+function drawAntennae(w, h, wobble) {
+  ctx.beginPath();
+  ctx.moveTo(-w*0.1, -h*0.4);
+  ctx.lineTo(-w*0.26, -h*0.58 + (wobble ? -2 : 2));
+  ctx.moveTo(w*0.1, -h*0.4);
+  ctx.lineTo(w*0.26, -h*0.58 + (wobble ? 2 : -2));
+  ctx.stroke();
+}
+
+function drawEyes(w, h, dotR = 0.05) {
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(-w*0.08, -h*0.22, w*dotR, h*(dotR+0.01), 0, 0, Math.PI*2);
+  ctx.ellipse(w*0.08, -h*0.22, w*dotR, h*(dotR+0.01), 0, 0, Math.PI*2);
+  ctx.fill();
+}
+
+// Row 0: avispa - cintura estrecha, abdomen puntiagudo, alas
+function drawWasp(w, h, wobble, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, w*0.05);
+  drawLegs(w, h, 3, 0.22, wobble);
+  drawAntennae(w, h, wobble);
+  // alas
+  ctx.globalAlpha = 0.5;
+  ctx.beginPath();
+  ctx.ellipse(-w*0.3, -h*0.05, w*0.22, h*(wobble ? 0.32 : 0.24), -0.3, 0, Math.PI*2);
+  ctx.ellipse(w*0.3, -h*0.05, w*0.22, h*(wobble ? 0.32 : 0.24), 0.3, 0, Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  // abdomen puntiagudo
+  ctx.beginPath();
+  ctx.moveTo(0, h*0.44);
+  ctx.quadraticCurveTo(w*0.3, h*0.1, 0, -h*0.02);
+  ctx.quadraticCurveTo(-w*0.3, h*0.1, 0, h*0.44);
+  ctx.fill();
+  // cintura
+  ctx.beginPath();
+  ctx.ellipse(0, -h*0.05, w*0.06, h*0.08, 0, 0, Math.PI*2);
+  ctx.fill();
+  // cabeza/torax
+  ctx.beginPath();
+  ctx.ellipse(0, -h*0.26, w*0.2, h*0.2, 0, 0, Math.PI*2);
+  ctx.fill();
+  drawEyes(w, h);
+}
+
+// Row 1: escarabajo - cuerpo ancho ovalado con caparazon dividido
+function drawBeetle(w, h, wobble, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, w*0.06);
+  drawLegs(w, h, 3, 0.24, wobble);
+  // caparazon
+  ctx.beginPath();
+  ctx.ellipse(0, h*0.05, w*0.42, h*0.4, 0, 0, Math.PI*2);
+  ctx.fill();
+  // linea central del caparazon
+  ctx.strokeStyle = '#000';
+  ctx.globalAlpha = 0.4;
+  ctx.beginPath();
+  ctx.moveTo(0, -h*0.3);
+  ctx.lineTo(0, h*0.4);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  // cabeza pequena
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, -h*0.36, w*0.14, h*0.12, 0, 0, Math.PI*2);
+  ctx.fill();
+  // cuernos (mandibulas)
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, w*0.04);
+  ctx.beginPath();
+  ctx.moveTo(-w*0.08, -h*0.46);
+  ctx.lineTo(-w*0.16, -h*0.6 + (wobble ? -1 : 1));
+  ctx.moveTo(w*0.08, -h*0.46);
+  ctx.lineTo(w*0.16, -h*0.6 + (wobble ? 1 : -1));
+  ctx.stroke();
+  drawEyes(w, h, 0.04);
+}
+
+// Row 2: hormiga - tres segmentos delgados, antenas largas
+function drawAnt(w, h, wobble, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, w*0.045);
+  drawLegs(w, h, 3, 0.2, wobble);
+  drawAntennae(w, h, wobble);
+  // abdomen (grande, atras)
+  ctx.beginPath();
+  ctx.ellipse(0, h*0.34, w*0.26, h*0.22, 0, 0, Math.PI*2);
+  ctx.fill();
+  // torax (medio, pequeno)
+  ctx.beginPath();
+  ctx.ellipse(0, h*0.02, w*0.14, h*0.14, 0, 0, Math.PI*2);
+  ctx.fill();
+  // cabeza (redonda)
+  ctx.beginPath();
+  ctx.ellipse(0, -h*0.28, w*0.19, h*0.19, 0, 0, Math.PI*2);
+  ctx.fill();
+  drawEyes(w, h, 0.045);
+}
+
+// Row 3: mosca - cuerpo redondo, ojos grandes, alas grandes
+function drawFly(w, h, wobble, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, w*0.05);
+  drawLegs(w, h, 2, 0.2, wobble);
+  // alas grandes
+  ctx.globalAlpha = 0.45;
+  ctx.beginPath();
+  ctx.ellipse(-w*0.32, -h*0.1, w*0.26, h*(wobble ? 0.36 : 0.26), -0.2, 0, Math.PI*2);
+  ctx.ellipse(w*0.32, -h*0.1, w*0.26, h*(wobble ? 0.36 : 0.26), 0.2, 0, Math.PI*2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  // cuerpo redondo
+  ctx.beginPath();
+  ctx.ellipse(0, h*0.08, w*0.3, h*0.34, 0, 0, Math.PI*2);
+  ctx.fill();
+  // cabeza con ojos enormes
+  ctx.beginPath();
+  ctx.ellipse(0, -h*0.28, w*0.24, h*0.2, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = '#a00';
+  ctx.beginPath();
+  ctx.ellipse(-w*0.11, -h*0.28, w*0.11, h*0.13, 0, 0, Math.PI*2);
+  ctx.ellipse(w*0.11, -h*0.28, w*0.11, h*0.13, 0, 0, Math.PI*2);
+  ctx.fill();
+}
+
+// Row 4: arana - cuerpo redondo compacto, 4 pares de patas, sin antenas
+function drawSpider(w, h, wobble, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(1, w*0.05);
+  drawLegs(w, h, 4, 0.32, wobble);
+  // cuerpo compacto
+  ctx.beginPath();
+  ctx.ellipse(0, h*0.06, w*0.28, h*0.3, 0, 0, Math.PI*2);
+  ctx.fill();
+  // cabeza fusionada
+  ctx.beginPath();
+  ctx.ellipse(0, -h*0.22, w*0.18, h*0.18, 0, 0, Math.PI*2);
+  ctx.fill();
+  // varios ojos
+  ctx.fillStyle = '#f00';
+  for (let i = -1; i <= 1; i++) {
+    ctx.beginPath();
+    ctx.ellipse(i*w*0.09, -h*0.26, w*0.035, h*0.035, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+const insectDrawers = [drawWasp, drawBeetle, drawAnt, drawFly, drawSpider];
+
+function drawAlien(a) {
+  const wobble = Math.sin(a.anim) > 0;
+  const color = alienColors[a.row % alienColors.length];
+  const x = a.x, y = a.y, w = a.w, h = a.h;
+  const cx = x + w/2, cy = y + h/2;
+  const drawer = insectDrawers[a.row % insectDrawers.length];
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  drawer(w, h, wobble, color);
+  ctx.restore();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
