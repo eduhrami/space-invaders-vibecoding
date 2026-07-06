@@ -286,6 +286,39 @@ function buildAliens() {
   alienSpeed = 1 + (level - 1) * 0.4;
   rowCleared = new Array(alienRows).fill(false);
   fallingItems = [];
+  boss = null;
+}
+
+// --- Boss ---
+// Aparece cuando se limpia toda la oleada normal de una fase. Es del mismo
+// estilo visual que los enemigos normales (reutiliza sus dibujos), pero a
+// tamaño de un bloque de 3x3 enemigos, y necesita 18 disparos para caer.
+const BOSS_HP = 18;
+const BOSS_SLOW_DURATION = 120; // 2s a 60fps
+const BOSS_SCORE_REWARD = 500;
+let boss = null;
+
+function spawnBoss() {
+  const bw = alienW * 3 + alienPad * 2;
+  const bh = alienH * 3 + alienPad * 2;
+  boss = {
+    x: W/2 - bw/2, y: 50,
+    w: bw, h: bh,
+    hp: BOSS_HP,
+    alive: true,
+    dir: 1,
+    speed: 1.5 + level * 0.3,
+    slowTimer: 0,
+    iceArmed: false, // true tras el primer impacto de hielo: el siguiente resta vida
+    anim: 0
+  };
+}
+
+function killBoss() {
+  if (!boss || !boss.alive) return;
+  boss.alive = false;
+  score += BOSS_SCORE_REWARD;
+  updateHud();
 }
 
 // --- Barriers (shields) ---
@@ -458,6 +491,16 @@ function update() {
     aliens.forEach(a => { if (a.alive) a.y += 16; });
   }
 
+  // move boss (rebota horizontalmente; más lento mientras dura el congelamiento)
+  if (boss && boss.alive) {
+    if (boss.slowTimer > 0) boss.slowTimer--;
+    const speedMult = boss.slowTimer > 0 ? 0.4 : 1;
+    boss.x += boss.dir * boss.speed * speedMult;
+    if (boss.x <= 0 || boss.x + boss.w >= W) boss.dir *= -1;
+    boss.x = Math.max(0, Math.min(W - boss.w, boss.x));
+    boss.anim += 0.05;
+  }
+
   // aliens reach player -> game over
   aliveAliens.forEach(a => {
     if (a.y + a.h >= player.y) {
@@ -469,6 +512,7 @@ function update() {
   alienDropTimer++;
   const fireChance = 0.015 + level * 0.003;
   const shooters = aliveAliens.filter(a => !a.frozen);
+  if (boss && boss.alive) shooters.push(boss);
   if (shooters.length > 0 && Math.random() < fireChance) {
     const shooter = shooters[Math.floor(Math.random()*shooters.length)];
     alienBullets.push({ x: shooter.x + shooter.w/2 - 2, y: shooter.y + shooter.h, w: 4, h: 12 });
@@ -502,6 +546,31 @@ function update() {
     });
   });
   playerBullets = playerBullets.filter(b => !b.hit);
+
+  // collisions: player bullets vs boss
+  if (boss && boss.alive) {
+    playerBullets.forEach(b => {
+      if (b.hit) return;
+      if (!b.hitAliens) b.hitAliens = new Set();
+      if (b.hitAliens.has(boss) || !rectHit(b, boss)) return;
+      b.hitAliens.add(boss);
+      if (b.ice) {
+        boss.slowTimer = BOSS_SLOW_DURATION;
+        if (boss.iceArmed) {
+          boss.hp -= 2;
+          boss.iceArmed = false;
+        } else {
+          boss.iceArmed = true;
+        }
+      } else {
+        boss.hp -= 1; // cada disparo normal o de fuego cuenta como uno de los 18
+      }
+      if (boss.hp <= 0) killBoss();
+      b.pierceLeft--;
+      if (b.pierceLeft <= 0) b.hit = true;
+    });
+    playerBullets = playerBullets.filter(b => !b.hit);
+  }
 
   // collisions: player bullets vs barriers
   playerBullets.forEach(b => {
@@ -544,18 +613,22 @@ function update() {
   });
   alienBullets = alienBullets.filter(b => !b.hit);
 
-  // win condition
+  // win condition: primero hay que limpiar la oleada, luego derrotar al boss
   if (aliveAliens.length === 0 && state === 'playing') {
-    if (level >= 5) {
-      endGame(true);
-    } else {
-      state = 'levelup';
-      showOverlay('¡NIVEL ' + level + ' SUPERADO!', 'Preparando nivel ' + (level+1) + '...', false);
-      setTimeout(() => {
-        nextLevel();
-        state = 'playing';
-        hideOverlay();
-      }, 1800);
+    if (!boss) {
+      spawnBoss();
+    } else if (!boss.alive) {
+      if (level >= 5) {
+        endGame(true);
+      } else {
+        state = 'levelup';
+        showOverlay('¡NIVEL ' + level + ' SUPERADO!', 'Preparando nivel ' + (level+1) + '...', false);
+        setTimeout(() => {
+          nextLevel();
+          state = 'playing';
+          hideOverlay();
+        }, 1800);
+      }
     }
   }
 }
@@ -604,6 +677,9 @@ function draw() {
     if (!a.alive) return;
     drawAlien(a);
   });
+
+  // boss
+  drawBoss();
 
   // items sorpresa cayendo
   fallingItems.forEach(drawFallingItem);
@@ -1001,6 +1077,30 @@ function drawBurnOverlay(w, h, a) {
   ctx.ellipse(0, 0, w*0.5, h*0.55, 0, 0, Math.PI*2);
   ctx.fill();
   ctx.globalAlpha = 1;
+}
+
+function drawBoss() {
+  if (!boss || !boss.alive) return;
+  const isMonster = enemyTheme === 'monsters';
+  const drawer = isMonster ? drawDemon : drawSpider;
+  const color = boss.slowTimer > 0 ? '#3ec6ff' : '#b30000';
+  const cx = boss.x + boss.w/2, cy = boss.y + boss.h/2;
+  const wobble = Math.sin(boss.anim) > 0;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  drawer(boss.w, boss.h, wobble, color);
+  ctx.restore();
+
+  // barra de vida
+  const barX = boss.x, barY = boss.y - 14, barW = boss.w;
+  ctx.fillStyle = '#400';
+  ctx.fillRect(barX, barY, barW, 8);
+  ctx.fillStyle = '#ff2222';
+  ctx.fillRect(barX, barY, barW * (boss.hp / BOSS_HP), 8);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX, barY, barW, 8);
 }
 
 function loop() {
