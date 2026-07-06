@@ -172,7 +172,7 @@ let rowCleared = []; // marca por fila si ya soltó su item de bonus
 // --- Sistema de items sorpresa (power-ups) ---
 // Cada entrada define cómo se ve el item al caer y qué efecto aplica al
 // recogerlo. Para agregar un item nuevo basta con sumar una entrada aquí
-// y (si necesita comportamiento propio, como las balas de fuego) leer
+// y (si necesita comportamiento propio, como fuego/hielo) leer
 // `activeEffects.<id>` donde corresponda.
 const ITEM_TYPES = {
   fireBullet: {
@@ -183,16 +183,32 @@ const ITEM_TYPES = {
     onPickup(effects, def) {
       effects.fireBullet = { timeLeft: def.duration, label: def.label };
     }
+  },
+  iceBullet: {
+    label: '❄️ Balas de hielo',
+    color: '#33aaff',
+    icon: '❄️',
+    duration: 480,
+    onPickup(effects, def) {
+      effects.iceBullet = { timeLeft: def.duration, label: def.label };
+    }
   }
 };
 
-// Efecto de las balas de fuego: más lentas, hacen menos daño directo pero
-// incendian al enemigo, que se va quemando poco a poco.
+// Efecto de las balas de fuego: más lentas y perforan, incendiando hasta
+// 2 enemigos por disparo; cada uno se va quemando poco a poco (parpadeo rojo)
+// hasta morir, en vez de caer al instante.
 const FIRE_BULLET_SPEED = 5;
 const FIRE_BULLET_DMG = 0;
 const FIRE_BURN_DMG_PER_TICK = 1;
 const FIRE_BURN_TICKS = 3;
 const FIRE_TICK_INTERVAL = 18; // frames entre cada "mordida" de fuego
+const FIRE_PIERCE_COUNT = 2; // enemigos que puede incendiar un mismo disparo
+
+// Efecto de las balas de hielo: no matan al impactar, congelan al enemigo
+// golpeado y a los de al lado (mismo fila). Los congelados no disparan y se
+// ven azules; un segundo impacto sobre un enemigo congelado lo elimina.
+const ICE_BULLET_SPEED = NORMAL_BULLET_SPEED;
 
 let activeEffects = {}; // efectos activos del jugador, keyed por id de item
 let fallingItems = []; // items cayendo, esperando a ser recogidos
@@ -213,10 +229,13 @@ function spawnItemDrop(rowAliens) {
   });
 }
 
+// El bonus cae apenas se elimina la mitad de una fila (no hace falta limpiarla entera)
 function checkRowClear(row) {
   if (rowCleared[row]) return;
   const rowAliens = aliens.filter(a => a.row === row);
-  if (rowAliens.length > 0 && rowAliens.every(a => !a.alive)) {
+  if (rowAliens.length === 0) return;
+  const deadCount = rowAliens.filter(a => !a.alive).length;
+  if (deadCount >= Math.ceil(rowAliens.length / 2)) {
     rowCleared[row] = true;
     spawnItemDrop(rowAliens);
   }
@@ -226,9 +245,20 @@ function killAlien(a) {
   if (!a.alive) return;
   a.alive = false;
   a.burning = false;
+  a.frozen = false;
   score += (alienRows - a.row) * 10;
   updateHud();
   checkRowClear(a.row);
+}
+
+// Congela al enemigo golpeado y a sus vecinos inmediatos en la misma fila
+function freezeAlien(a) {
+  a.frozen = true;
+  aliens.forEach(n => {
+    if (n.alive && n.row === a.row && (n.col === a.col - 1 || n.col === a.col + 1)) {
+      n.frozen = true;
+    }
+  });
 }
 
 function buildAliens() {
@@ -242,11 +272,13 @@ function buildAliens() {
         w: alienW, h: alienH,
         alive: true,
         row: r,
+        col: c,
         anim: 0,
         hp: ALIEN_HP,
         burning: false,
         burnTimer: 0,
-        burnTicksLeft: 0
+        burnTicksLeft: 0,
+        frozen: false
       });
     }
   }
@@ -359,11 +391,14 @@ function update() {
   if (player.cooldown > 0) player.cooldown--;
   if (keys['Space'] && player.cooldown <= 0) {
     const fireActive = !!activeEffects.fireBullet;
+    const iceActive = !fireActive && !!activeEffects.iceBullet;
     playerBullets.push({
       x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 12,
-      vy: fireActive ? FIRE_BULLET_SPEED : NORMAL_BULLET_SPEED,
+      vy: fireActive ? FIRE_BULLET_SPEED : (iceActive ? ICE_BULLET_SPEED : NORMAL_BULLET_SPEED),
       dmg: fireActive ? FIRE_BULLET_DMG : NORMAL_BULLET_DMG,
-      fire: fireActive
+      fire: fireActive,
+      ice: iceActive,
+      pierceLeft: fireActive ? FIRE_PIERCE_COUNT : 1
     });
     player.cooldown = 15;
   }
@@ -430,28 +465,39 @@ function update() {
     }
   });
 
-  // alien shooting
+  // alien shooting (los congelados no pueden disparar)
   alienDropTimer++;
   const fireChance = 0.015 + level * 0.003;
-  if (aliveAliens.length > 0 && Math.random() < fireChance) {
-    const shooter = aliveAliens[Math.floor(Math.random()*aliveAliens.length)];
+  const shooters = aliveAliens.filter(a => !a.frozen);
+  if (shooters.length > 0 && Math.random() < fireChance) {
+    const shooter = shooters[Math.floor(Math.random()*shooters.length)];
     alienBullets.push({ x: shooter.x + shooter.w/2 - 2, y: shooter.y + shooter.h, w: 4, h: 12 });
   }
 
   // collisions: player bullets vs aliens
   playerBullets.forEach(b => {
     if (b.hit) return;
+    if (!b.hitAliens) b.hitAliens = new Set();
     aliens.forEach(a => {
-      if (!a.alive || b.hit) return;
+      if (!a.alive || b.hit || b.hitAliens.has(a)) return;
       if (rectHit(b, a)) {
-        b.hit = true;
-        if (b.fire) {
-          a.burning = true;
-          a.burnTimer = 0;
-          a.burnTicksLeft = FIRE_BURN_TICKS;
+        b.hitAliens.add(a);
+        if (a.frozen) {
+          // un enemigo ya congelado se rompe y muere con cualquier impacto
+          killAlien(a);
+        } else if (b.ice) {
+          freezeAlien(a);
+        } else {
+          if (b.fire) {
+            a.burning = true;
+            a.burnTimer = 0;
+            a.burnTicksLeft = FIRE_BURN_TICKS;
+          }
+          a.hp -= b.dmg;
+          if (a.hp <= 0) killAlien(a);
         }
-        a.hp -= b.dmg;
-        if (a.hp <= 0) killAlien(a);
+        b.pierceLeft--;
+        if (b.pierceLeft <= 0) b.hit = true;
       }
     });
   });
@@ -545,7 +591,7 @@ function draw() {
 
   // player bullets
   playerBullets.forEach(b => {
-    ctx.fillStyle = b.fire ? '#ff6600' : '#0ff';
+    ctx.fillStyle = b.fire ? '#ff6600' : (b.ice ? '#33aaff' : '#0ff');
     ctx.fillRect(b.x, b.y, b.w, b.h);
   });
 
@@ -595,13 +641,15 @@ function drawFallingItem(item) {
 
 function updatePowerupHud() {
   const el = document.getElementById('powerupBar');
-  if (activeEffects.fireBullet) {
-    const secs = Math.ceil(activeEffects.fireBullet.timeLeft / 60);
-    el.textContent = activeEffects.fireBullet.label + ': ' + secs + 's';
-    el.style.display = 'block';
-  } else {
+  const active = Object.keys(activeEffects);
+  if (active.length === 0) {
     el.style.display = 'none';
+    return;
   }
+  el.textContent = active
+    .map(id => activeEffects[id].label + ': ' + Math.ceil(activeEffects[id].timeLeft / 60) + 's')
+    .join('   ·   ');
+  el.style.display = 'block';
 }
 
 function drawPlayer() {
@@ -931,7 +979,7 @@ function drawAlien(a) {
   const isMonster = enemyTheme === 'monsters';
   const colors = isMonster ? monsterColors : alienColors;
   const drawers = isMonster ? monsterDrawers : insectDrawers;
-  const color = colors[a.row % colors.length];
+  const color = a.frozen ? '#3ec6ff' : colors[a.row % colors.length];
   const x = a.x, y = a.y, w = a.w, h = a.h;
   const cx = x + w/2, cy = y + h/2;
   const drawer = drawers[a.row % drawers.length];
@@ -939,23 +987,19 @@ function drawAlien(a) {
   ctx.save();
   ctx.translate(cx, cy);
   drawer(w, h, wobble, color);
-  if (a.burning) drawBurnOverlay(w, h);
+  if (a.burning) drawBurnOverlay(w, h, a);
   ctx.restore();
 }
 
-function drawBurnOverlay(w, h) {
-  for (let i = 0; i < 3; i++) {
-    const fx = (Math.random() - 0.5) * w * 0.7;
-    const fy = (Math.random() - 0.5) * h * 0.7;
-    ctx.globalAlpha = 0.55 + Math.random() * 0.35;
-    ctx.fillStyle = Math.random() > 0.5 ? '#ff8800' : '#ffcf3f';
-    ctx.beginPath();
-    ctx.moveTo(fx, fy + h*0.16);
-    ctx.lineTo(fx - w*0.07, fy - h*0.14);
-    ctx.lineTo(fx + w*0.07, fy - h*0.14);
-    ctx.closePath();
-    ctx.fill();
-  }
+// Mientras arden, parpadean en rojo en vez de mostrar su color normal
+function drawBurnOverlay(w, h, a) {
+  const blinkOn = Math.sin(a.anim * 6) > 0;
+  if (!blinkOn) return;
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = '#ff2222';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, w*0.5, h*0.55, 0, 0, Math.PI*2);
+  ctx.fill();
   ctx.globalAlpha = 1;
 }
 
