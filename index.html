@@ -150,7 +150,8 @@ const player = {
   speed: 6,
   cooldown: 0,
   shieldHits: 0, // impactos que el escudo absorbe antes de perder una vida
-  retryTokens: 0 // oportunidades de reintentar el nivel si pierdes
+  retryTokens: 0, // oportunidades de reintentar el nivel si pierdes
+  extraLives: 0 // reapareces donde estabas, sin reiniciar la oleada/boss
 };
 
 let keys = {};
@@ -227,6 +228,15 @@ const ITEM_TYPES = {
     onPickup() {
       player.retryTokens += 1;
     }
+  },
+  extraLife: {
+    label: '❤️ Vida extra',
+    color: '#ff4477',
+    icon: '❤️',
+    weight: 0.4, // más raro que el resto de los items
+    onPickup() {
+      player.extraLives += 1;
+    }
   }
 };
 
@@ -249,9 +259,17 @@ const ICE_BULLET_SPEED = NORMAL_BULLET_SPEED;
 let activeEffects = {}; // efectos activos del jugador, keyed por id de item
 let fallingItems = []; // items cayendo, esperando a ser recogidos
 
+// Selección ponderada: cada item pesa 1 salvo que declare `weight` (ej. la
+// vida extra, que debe caer con menos frecuencia que el resto).
 function pickRandomItemType() {
-  const ids = Object.keys(ITEM_TYPES);
-  return ids[Math.floor(Math.random() * ids.length)];
+  const entries = Object.entries(ITEM_TYPES);
+  const totalWeight = entries.reduce((sum, [, def]) => sum + (def.weight || 1), 0);
+  let roll = Math.random() * totalWeight;
+  for (const [id, def] of entries) {
+    roll -= (def.weight || 1);
+    if (roll <= 0) return id;
+  }
+  return entries[entries.length - 1][0];
 }
 
 function spawnItemAt(cx, cy) {
@@ -456,6 +474,7 @@ function resetGame() {
   player.x = W/2 - player.w/2;
   player.shieldHits = 0;
   player.retryTokens = 0;
+  player.extraLives = 0;
   playerBullets = [];
   alienBullets = [];
   activeEffects = {};
@@ -762,6 +781,11 @@ function rectHit(a, b) {
 }
 
 function endGame(won) {
+  if (!won && player.extraLives > 0) {
+    player.extraLives--;
+    respawnPlayer();
+    return;
+  }
   if (!won && player.retryTokens > 0) {
     player.retryTokens--;
     retryLevel();
@@ -773,6 +797,21 @@ function endGame(won) {
   } else {
     showOverlay('GAME OVER', 'Puntaje final: ' + score + ' · Elige tu enemigo para jugar de nuevo');
   }
+}
+
+// Consume una vida extra: NO reinicia la oleada ni el boss, solo reaparece
+// donde estabas (misma posición) con una vida fresca.
+function respawnPlayer() {
+  state = 'levelup';
+  lives = 1;
+  playerBullets = [];
+  alienBullets = [];
+  updateHud();
+  showOverlay('¡VIDA EXTRA!', 'Reapareces donde estabas · Te quedan ' + player.extraLives + ' vidas extra', false);
+  setTimeout(() => {
+    state = 'playing';
+    hideOverlay();
+  }, 1200);
 }
 
 // Consume un item de reintento: reconstruye el nivel actual en vez de terminar la partida
@@ -885,6 +924,7 @@ function updateStatusBar() {
   const parts = [];
   if (player.shieldHits > 0) parts.push('🛡️ Escudo x' + player.shieldHits);
   if (player.retryTokens > 0) parts.push('🔁 Reintentos x' + player.retryTokens);
+  if (player.extraLives > 0) parts.push('❤️ Vidas extra x' + player.extraLives);
   if (parts.length === 0) {
     el.style.display = 'none';
     return;
