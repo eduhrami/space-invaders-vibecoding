@@ -266,7 +266,7 @@ const ITEM_TYPES = {
     label: '🔫 Ametralladora',
     color: '#ffee00',
     icon: '🔫',
-    duration: 80000, // ~22 min a 60fps: dura prácticamente toda la partida
+    duration: 480, // 8s a 60fps
     onPickup(effects, def) {
       effects.machineGun = { timeLeft: def.duration, label: def.label };
     }
