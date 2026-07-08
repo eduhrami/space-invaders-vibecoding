@@ -52,20 +52,19 @@ Este archivo es el punto de partida para retomar cualquiera de las dos cosas en 
 
 ## El taller (manual publicado como Artifact)
 
-- URL actual: `https://claude.ai/code/artifact/52d61da3-e8fd-4a21-8dfe-4b9ba5d47734` ("Vibecoding Arcade" — manual de taller en español neutro latino).
-- Contenido: qué es vibecoding, tabla de 12 pasos con el historial real de este juego como caso de estudio, la regla de oro ("un prompt, un cambio visible"), guion de taller de ~90 min, menú de juegos recomendados (Pong/Viborita/Rompe-bloques en nivel 1; Space Invaders/Flappy en nivel 2; Pac-Man/Tetris/2048 en nivel 3 avanzado, con advertencias técnicas específicas de cada uno), banco de prompts por categoría, buenas prácticas para ahorrar tokens, y retos para después.
+- URL publicada: `https://claude.ai/code/artifact/52d61da3-e8fd-4a21-8dfe-4b9ba5d47734` ("Vibecoding Arcade" — manual de taller en español neutro latino).
+- Copia fuente versionada: **`taller/manual.html`** en este repo — es el mismo HTML que está publicado (con las fuentes ya incrustadas en base64), así que se puede abrir directo con doble clic o servir desde GitHub Pages sin depender del Artifact.
+- Contenido: qué es vibecoding, tabla de 14 pasos con el historial real de este juego como caso de estudio (con los pedidos casi textuales, no resumidos, y el detalle concreto de qué se construyó en cada uno), la regla de oro ("un prompt, un cambio visible"), guion de taller de ~90 min, menú de juegos recomendados (Pong/Viborita/Rompe-bloques en nivel 1; Space Invaders/Flappy en nivel 2; Pac-Man/Tetris/2048 en nivel 3 avanzado, con advertencias técnicas específicas de cada uno), banco de prompts por categoría, buenas prácticas para ahorrar tokens, y retos para después.
 - Diseño: identidad "manual de arcade" — modo claro como papel de manual envejecido, modo oscuro como pantalla CRT. Tipografías incrustadas como `@font-face` en base64 (Agency FB para titulares tipo marquesina, Corbel para cuerpo de texto), tomadas de `/mnt/c/Windows/Fonts/`.
 
-### ⚠️ Importante: el archivo fuente del manual NO vive en este repo
+### Cómo seguir editando el manual
 
-Se generó en el directorio de scratchpad de la sesión en la que se creó (`/tmp/claude-.../scratchpad/vibecoding-arcade-manual.html`), que es temporal y no persiste entre sesiones. Para seguir editando el manual en una sesión nueva:
+El HTML de `taller/manual.html` ya trae las fuentes incrustadas (~950 KB) — no hace falta regenerarlo desde cero para cambios de texto/CSS, se puede editar directo. Solo hay que volver a incrustar las fuentes si se reescribe el archivo entero desde una plantilla sin ellas (ver el script de incrustado en el historial de esta conversación, usa `/mnt/c/Windows/Fonts/AGENCYB.TTF`, `AGENCYR.TTF`, `corbel.ttf`, `corbelb.ttf`). Después de editar:
 
-1. Traer el HTML publicado con `WebFetch` sobre la URL de arriba.
-2. Guardarlo en un archivo local (por ejemplo, en un nuevo scratchpad o en `taller/` dentro de este repo, si se quiere que persista de verdad).
-3. Editarlo con las herramientas normales.
-4. Volver a publicarlo con la herramienta `Artifact`, pasando `url` con la misma URL de arriba para que se actualice en el mismo lugar en vez de crear una página nueva.
+1. Actualizar `taller/manual.html` en el repo y comitear.
+2. Republicar con la herramienta `Artifact` pasando `url` con la misma URL de arriba, para que se actualice en el mismo lugar en vez de crear una página nueva.
 
-Si se quiere que el manual persista junto con el juego (recomendado si se va a seguir iterando), conviene guardar una copia del HTML fuente dentro de este repo (por ejemplo `taller/manual.html`) y commitear ahí, además de publicarlo como Artifact.
+Si en algún momento se perdiera la copia local y hiciera falta partir del HTML ya publicado, se puede traer con `WebFetch` sobre la URL de arriba.
 
 ### Pendientes que el usuario dejó abiertos sobre el taller
 
