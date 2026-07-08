@@ -150,7 +150,6 @@ const player = {
   speed: 6,
   cooldown: 0,
   shieldHits: 0, // impactos que el escudo absorbe antes de perder una vida
-  retryTokens: 0, // oportunidades de reintentar el nivel si pierdes
   extraLives: 0 // reapareces donde estabas, sin reiniciar la oleada/boss
 };
 
@@ -221,19 +220,14 @@ const ITEM_TYPES = {
       player.shieldHits += 2;
     }
   },
-  retryToken: {
-    label: '🔁 Reintento extra',
-    color: '#ffd700',
-    icon: '🔁',
-    onPickup() {
-      player.retryTokens += 1;
-    }
-  },
   extraLife: {
     label: '❤️ Vida extra',
     color: '#ff4477',
     icon: '❤️',
-    weight: 0.4, // más raro que el resto de los items
+    // el item de reintentar se eliminó; este peso equivale a la probabilidad
+    // combinada que antes tenían reintentar (1) + vida extra (0.4) juntos,
+    // para que la vida extra no sea tan infrecuente ahora que es el único.
+    weight: 1.4,
     onPickup() {
       player.extraLives += 1;
     }
@@ -383,26 +377,33 @@ function spawnBoss() {
   const isMonster = enemyTheme === 'monsters';
   const cycle = bossCycle(level);
 
-  let bw, bh, hp, drawer, baseColor;
+  let bw, bh, hp, drawer, baseColor, name;
   if (isFinal) {
     bw = alienW * 5 + alienPad * 4;
     bh = alienH * 5 + alienPad * 4;
     hp = FINAL_BOSS_HP;
     drawer = drawRat;
     baseColor = '#8a6a4a';
+    name = 'Rata Furiosa';
   } else if (isMajor) {
     bw = alienW * 4 + alienPad * 3;
     bh = alienH * 4 + alienPad * 3;
     hp = MAJOR_BOSS_BASE_HP + cycle * 4;
     const majors = isMonster ? monsterMajorBossDrawers : insectMajorBossDrawers;
-    drawer = majors[(level / 4 - 1) % majors.length];
+    const majorNames = isMonster ? monsterMajorBossNames : insectMajorBossNames;
+    const majorIdx = (level / 4 - 1) % majors.length;
+    drawer = majors[majorIdx];
+    name = majorNames[majorIdx];
     baseColor = '#7a1010';
   } else {
     bw = alienW * 3 + alienPad * 2;
     bh = alienH * 3 + alienPad * 2;
     hp = SMALL_BOSS_BASE_HP + cycle * 3;
     const smalls = isMonster ? monsterBossDrawers : insectBossDrawers;
-    drawer = smalls[smallBossIndex(level) % smalls.length];
+    const smallNames = isMonster ? monsterBossNames : insectBossNames;
+    const smallIdx = smallBossIndex(level) % smalls.length;
+    drawer = smalls[smallIdx];
+    name = smallNames[smallIdx];
     baseColor = '#b30000';
   }
 
@@ -418,6 +419,7 @@ function spawnBoss() {
     slowTimer: 0,
     iceArmed: false, // true tras el primer impacto de hielo: el siguiente resta vida
     hitsTaken: 0, // dispara un item de bonus cada BOSS_ITEM_DROP_INTERVAL impactos
+    name,
     anim: 0,
     drawer,
     baseColor,
@@ -473,7 +475,6 @@ function resetGame() {
   level = 1;
   player.x = W/2 - player.w/2;
   player.shieldHits = 0;
-  player.retryTokens = 0;
   player.extraLives = 0;
   playerBullets = [];
   alienBullets = [];
@@ -760,6 +761,12 @@ function update() {
   if (aliveAliens.length === 0 && state === 'playing') {
     if (!boss) {
       spawnBoss();
+      state = 'levelup';
+      showOverlay('¡BOSS!', boss.name, false);
+      setTimeout(() => {
+        state = 'playing';
+        hideOverlay();
+      }, 1500);
     } else if (!boss.alive) {
       if (level >= TOTAL_LEVELS) {
         endGame(true);
@@ -786,11 +793,6 @@ function endGame(won) {
     respawnPlayer();
     return;
   }
-  if (!won && player.retryTokens > 0) {
-    player.retryTokens--;
-    retryLevel();
-    return;
-  }
   state = won ? 'win' : 'gameover';
   if (won) {
     showOverlay('¡GANASTE!', 'Puntaje final: ' + score + ' · Elige tu enemigo para jugar de nuevo');
@@ -812,24 +814,6 @@ function respawnPlayer() {
     state = 'playing';
     hideOverlay();
   }, 1200);
-}
-
-// Consume un item de reintento: reconstruye el nivel actual en vez de terminar la partida
-function retryLevel() {
-  state = 'levelup';
-  lives = 3;
-  playerBullets = [];
-  alienBullets = [];
-  player.shieldHits = 0;
-  player.x = W/2 - player.w/2;
-  buildAliens();
-  buildBarriers();
-  updateHud();
-  showOverlay('¡SEGUNDA OPORTUNIDAD!', 'Reintentando el nivel ' + level + ' · Te quedan ' + player.retryTokens + ' reintentos', false);
-  setTimeout(() => {
-    state = 'playing';
-    hideOverlay();
-  }, 1600);
 }
 
 function draw() {
@@ -923,7 +907,6 @@ function updateStatusBar() {
   const el = document.getElementById('statusBar');
   const parts = [];
   if (player.shieldHits > 0) parts.push('🛡️ Escudo x' + player.shieldHits);
-  if (player.retryTokens > 0) parts.push('🔁 Reintentos x' + player.retryTokens);
   if (player.extraLives > 0) parts.push('❤️ Vidas extra x' + player.extraLives);
   if (parts.length === 0) {
     el.style.display = 'none';
@@ -1403,6 +1386,12 @@ const insectBossDrawers = [
   drawCockroach, drawCentipede, drawScorpion, drawDragonfly, drawCricket,
   drawStinkBug, drawFirefly, drawMosquito, drawTermite, drawEarwig
 ];
+// Nombres en el mismo orden que insectBossDrawers
+const insectBossNames = [
+  'Avispa', 'Escarabajo', 'Hormiga', 'Mosca', 'Araña',
+  'Cucaracha Blindada', 'Ciempiés', 'Escorpión', 'Libélula', 'Grillo Saltador',
+  'Chinche Gigante', 'Luciérnaga', 'Mosquito Vampiro', 'Termita Soldado', 'Tijereta Gigante'
+];
 
 // Bosses mayores de insectos (niveles 4, 8, 12, 16 - uno distinto por aparición)
 function drawMantisQueen(w, h, wobble, color) {
@@ -1566,6 +1555,7 @@ function drawLocustLord(w, h, wobble, color) {
 }
 
 const insectMajorBossDrawers = [drawMantisQueen, drawWaspQueen, drawWidowQueen, drawLocustLord];
+const insectMajorBossNames = ['Reina Mantis', 'Reina Avispa', 'Reina Viuda Negra', 'Señor Langosta'];
 
 // Row 0: fantasma - forma redondeada arriba, base ondulada
 function drawGhost(w, h, wobble, color) {
@@ -2023,6 +2013,12 @@ const monsterBossDrawers = [
   drawMummy, drawWerewolf, drawVampire, drawPoltergeist, drawGoblin,
   drawScarecrow, drawClown, drawShadow, drawCyclops, drawTroll
 ];
+// Nombres en el mismo orden que monsterBossDrawers
+const monsterBossNames = [
+  'Fantasma', 'Calavera', 'Zombie', 'Demonio', 'Blob',
+  'Momia', 'Hombre Lobo', 'Vampiro', 'Poltergeist', 'Duende Maligno',
+  'Espantapájaros Poseído', 'Payaso Maldito', 'Sombra Viviente', 'Cíclope', 'Troll de Puente'
+];
 
 // Bosses mayores de monstruos (niveles 4, 8, 12, 16 - uno distinto por aparición)
 function drawWitch(w, h, wobble, color) {
@@ -2185,6 +2181,7 @@ function drawDragon(w, h, wobble, color) {
 }
 
 const monsterMajorBossDrawers = [drawWitch, drawGargoyle, drawGolem, drawDragon];
+const monsterMajorBossNames = ['Bruja', 'Gárgola', 'Golem de Piedra', 'Dragón'];
 
 // Boss final (nivel 20, ambas historias): rata furiosa
 function drawRat(w, h, wobble, color) {
@@ -2285,6 +2282,12 @@ function drawBoss() {
   ctx.translate(cx, cy);
   boss.drawer(boss.w, boss.h, wobble, color);
   ctx.restore();
+
+  // nombre del boss
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(boss.name, boss.x + boss.w/2, boss.y - 20);
 
   // barra de vida
   const barX = boss.x, barY = boss.y - 14, barW = boss.w;
