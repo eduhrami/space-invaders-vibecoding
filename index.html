@@ -254,15 +254,19 @@ function pickRandomItemType() {
   return ids[Math.floor(Math.random() * ids.length)];
 }
 
-function spawnItemDrop(rowAliens) {
-  const avgX = rowAliens.reduce((sum, a) => sum + a.x + a.w / 2, 0) / rowAliens.length;
-  const y = rowAliens[0].y;
+function spawnItemAt(cx, cy) {
   fallingItems.push({
-    x: avgX - 12, y, w: 24, h: 24,
+    x: cx - 12, y: cy - 12, w: 24, h: 24,
     vy: 2.2,
     spin: 0,
     typeId: pickRandomItemType()
   });
+}
+
+function spawnItemDrop(rowAliens) {
+  const avgX = rowAliens.reduce((sum, a) => sum + a.x + a.w / 2, 0) / rowAliens.length;
+  const y = rowAliens[0].y;
+  spawnItemAt(avgX, y + 12);
 }
 
 // El bonus cae apenas se elimina la mitad de una fila (no hace falta limpiarla entera)
@@ -340,6 +344,7 @@ const FINAL_BOSS_HP = 45;
 const BOSS_SLOW_DURATION = 120; // 2s a 60fps
 const BOSS_SCORE_REWARD = 500;
 const BOSS_MAJOR_SCORE_REWARD = 1200;
+const BOSS_ITEM_DROP_INTERVAL = 5; // cada cuántos disparos que le pegan suelta un item
 let boss = null;
 
 // 0 en los niveles 1-4, 1 en 5-8, 2 en 9-12, 3 en 13-16, 4 en 17-20
@@ -394,6 +399,7 @@ function spawnBoss() {
     bulletDmg: cycle >= 3 ? 2 : 1, // desde el ciclo 3 (nivel 13+) sus disparos quitan 2 vidas
     slowTimer: 0,
     iceArmed: false, // true tras el primer impacto de hielo: el siguiente resta vida
+    hitsTaken: 0, // dispara un item de bonus cada BOSS_ITEM_DROP_INTERVAL impactos
     anim: 0,
     drawer,
     baseColor,
@@ -673,6 +679,11 @@ function update() {
         }
       } else {
         boss.hp -= 1; // cada disparo normal o de fuego cuenta como uno de los 18
+      }
+      boss.hitsTaken++;
+      if (boss.hitsTaken >= BOSS_ITEM_DROP_INTERVAL) {
+        boss.hitsTaken = 0;
+        spawnItemAt(boss.x + boss.w/2, boss.y + boss.h + 16);
       }
       if (boss.hp <= 0) killBoss();
       b.pierceLeft--;
