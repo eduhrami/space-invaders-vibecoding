@@ -191,8 +191,15 @@ const ITEM_TYPES = {
     color: '#ff6600',
     icon: '🔥',
     duration: 480, // ~8s a 60fps
+    // cada item de fuego adicional que recoges suma un disparo simultáneo más
+    // (2 items = doble disparo, 3 = triple, ...); tope de seguridad en 8.
     onPickup(effects, def) {
-      effects.fireBullet = { timeLeft: def.duration, label: def.label };
+      if (!effects.fireBullet) {
+        effects.fireBullet = { timeLeft: def.duration, label: def.label, stacks: 1 };
+      } else {
+        effects.fireBullet.stacks = Math.min(effects.fireBullet.stacks + 1, FIRE_MAX_STACKS);
+        effects.fireBullet.timeLeft = def.duration;
+      }
     }
   },
   iceBullet: {
@@ -232,6 +239,7 @@ const FIRE_BURN_DMG_PER_TICK = 1;
 const FIRE_BURN_TICKS = 3;
 const FIRE_TICK_INTERVAL = 18; // frames entre cada "mordida" de fuego
 const FIRE_PIERCE_COUNT = 2; // enemigos que puede incendiar un mismo disparo
+const FIRE_MAX_STACKS = 8; // tope de disparos simultáneos por acumular items de fuego
 
 // Efecto de las balas de hielo: no matan al impactar, congelan al enemigo
 // golpeado y a los de al lado (mismo fila). Los congelados no disparan y se
@@ -507,14 +515,19 @@ function update() {
   if (keys['Space'] && player.cooldown <= 0) {
     const fireActive = !!activeEffects.fireBullet;
     const iceActive = !fireActive && !!activeEffects.iceBullet;
-    playerBullets.push({
-      x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 12,
-      vy: fireActive ? FIRE_BULLET_SPEED : (iceActive ? ICE_BULLET_SPEED : NORMAL_BULLET_SPEED),
-      dmg: fireActive ? FIRE_BULLET_DMG : NORMAL_BULLET_DMG,
-      fire: fireActive,
-      ice: iceActive,
-      pierceLeft: fireActive ? FIRE_PIERCE_COUNT : 1
-    });
+    // cada item de fuego acumulado dispara una bala de fuego más en abanico
+    const shots = fireActive ? activeEffects.fireBullet.stacks : 1;
+    for (let i = 0; i < shots; i++) {
+      const spread = shots > 1 ? (i - (shots - 1) / 2) * 9 : 0;
+      playerBullets.push({
+        x: player.x + player.w/2 - 2 + spread, y: player.y, w: 4, h: 12,
+        vy: fireActive ? FIRE_BULLET_SPEED : (iceActive ? ICE_BULLET_SPEED : NORMAL_BULLET_SPEED),
+        dmg: fireActive ? FIRE_BULLET_DMG : NORMAL_BULLET_DMG,
+        fire: fireActive,
+        ice: iceActive,
+        pierceLeft: fireActive ? FIRE_PIERCE_COUNT : 1
+      });
+    }
     player.cooldown = 15;
   }
 
@@ -573,22 +586,29 @@ function update() {
     aliens.forEach(a => { if (a.alive) a.y += 16; });
   }
 
-  // move boss (rebota horizontalmente; más lento mientras dura el congelamiento)
+  // move boss (rebota horizontalmente y baja en cada rebote, igual que los
+  // enemigos regulares; más lento mientras dura el congelamiento)
   if (boss && boss.alive) {
     if (boss.slowTimer > 0) boss.slowTimer--;
     const speedMult = boss.slowTimer > 0 ? 0.4 : 1;
     boss.x += boss.dir * boss.speed * speedMult;
-    if (boss.x <= 0 || boss.x + boss.w >= W) boss.dir *= -1;
+    if (boss.x <= 0 || boss.x + boss.w >= W) {
+      boss.dir *= -1;
+      boss.y += 16;
+    }
     boss.x = Math.max(0, Math.min(W - boss.w, boss.x));
     boss.anim += 0.05;
   }
 
-  // aliens reach player -> game over
+  // aliens (y el boss) llegan al jugador -> game over
   aliveAliens.forEach(a => {
     if (a.y + a.h >= player.y) {
       endGame(false);
     }
   });
+  if (boss && boss.alive && boss.y + boss.h >= player.y) {
+    endGame(false);
+  }
 
   // alien shooting (los congelados no pueden disparar)
   alienDropTimer++;
@@ -840,7 +860,11 @@ function updatePowerupHud() {
     return;
   }
   el.textContent = active
-    .map(id => activeEffects[id].label + ': ' + Math.ceil(activeEffects[id].timeLeft / 60) + 's')
+    .map(id => {
+      const eff = activeEffects[id];
+      const stackTag = eff.stacks > 1 ? ' x' + eff.stacks : '';
+      return eff.label + stackTag + ': ' + Math.ceil(eff.timeLeft / 60) + 's';
+    })
     .join('   ·   ');
   el.style.display = 'block';
 }
