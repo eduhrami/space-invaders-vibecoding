@@ -42,6 +42,7 @@ Este archivo es el punto de partida para retomar cualquiera de las dos cosas en 
   - `shield`: +2 golpes de escudo (`player.shieldHits`), se ve como anillo brillante alrededor de la nave.
   - `extraLife`: raro (`weight: 1.4`, calculado para igualar lo que antes sumaban el item de reintentar + vida extra juntos — ver commit `40dcf5c`), reaparece en el mismo lugar con 1 vida, sin reconstruir la oleada/boss.
   - `bomb`: tecla **B**, no gasta el arma equipada. Misil lento con estela de humo; al chocar destruye un bloque de 3×3 enemigos (`detonateBomb`) o resta 9 hp al boss. Muestra el cartel "¡BOMBA LEGENDARIA!" al disparar.
+  - `machineGun`: mantiene la bala normal (cian) pero baja el enfriamiento de disparo a 1/5 (`MACHINEGUN_COOLDOWN = NORMAL_COOLDOWN / 5`); cede prioridad a fuego/hielo si también están activos.
 - **Bosses**: aparecen al limpiar la oleada de cada nivel (`spawnBoss()`, línea ~415). `TOTAL_LEVELS = 20`.
   - Niveles normales → boss **pequeño** (3×3), rotando por `insectBossDrawers`/`monsterBossDrawers` (15 diseños cada uno, `smallBossIndex()` garantiza que ninguno se repite en una partida completa de 20 niveles).
   - Múltiplos de 4 (4, 8, 12, 16) → boss **mayor** (4×4), uno único por aparición (`insectMajorBossDrawers`/`monsterMajorBossDrawers`, 4 diseños cada uno).
