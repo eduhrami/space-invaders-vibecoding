@@ -186,6 +186,8 @@ let playerBullets = [];
 let alienBullets = [];
 const NORMAL_BULLET_SPEED = 9;
 const NORMAL_BULLET_DMG = 2;
+const NORMAL_COOLDOWN = 15; // frames entre disparos con el arma normal
+const MACHINEGUN_COOLDOWN = NORMAL_COOLDOWN / 5; // 5 veces más rápido
 
 // --- Aliens ---
 let aliens = [];
@@ -258,6 +260,15 @@ const ITEM_TYPES = {
     weight: 0.5, // aparece poco frecuente, aprox. 1 de cada 10 items
     onPickup() {
       player.bombs += 1;
+    }
+  },
+  machineGun: {
+    label: '🔫 Ametralladora',
+    color: '#ffee00',
+    icon: '🔫',
+    duration: 480, // ~8s a 60fps
+    onPickup(effects, def) {
+      effects.machineGun = { timeLeft: def.duration, label: def.label };
     }
   }
 };
@@ -608,6 +619,7 @@ function update() {
   if (keys['Space'] && player.cooldown <= 0) {
     const fireActive = !!activeEffects.fireBullet;
     const iceActive = !fireActive && !!activeEffects.iceBullet;
+    const machineGunActive = !fireActive && !iceActive && !!activeEffects.machineGun;
     // cada item de fuego acumulado dispara una bala de fuego más en abanico
     const shots = fireActive ? activeEffects.fireBullet.stacks : 1;
     for (let i = 0; i < shots; i++) {
@@ -621,7 +633,7 @@ function update() {
         pierceLeft: fireActive ? FIRE_PIERCE_COUNT : 1
       });
     }
-    player.cooldown = 15;
+    player.cooldown = machineGunActive ? MACHINEGUN_COOLDOWN : NORMAL_COOLDOWN;
   }
 
   // bomba (tecla B): destruye un bloque de 3x3 enemigos alrededor del impacto
