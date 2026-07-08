@@ -18,6 +18,22 @@
   }
   #wrap {
     text-align: center;
+    position: relative;
+  }
+  #bombBanner {
+    display: none;
+    position: absolute;
+    top: 45%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 34px;
+    font-weight: bold;
+    color: #ff3300;
+    text-shadow: 0 0 12px #ff6600, 0 0 24px #ff9900;
+    letter-spacing: 2px;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 5;
   }
   canvas {
     background: #000;
@@ -108,9 +124,10 @@
     <div>NIVEL: <span id="level">1</span></div>
   </div>
   <canvas id="game" width="600" height="600"></canvas>
+  <div id="bombBanner">¡BOMBA LEGENDARIA!</div>
   <div id="powerupBar"></div>
   <div id="statusBar"></div>
-  <div id="hint">← → mover · ESPACIO disparar · P pausa</div>
+  <div id="hint">← → mover · ESPACIO disparar · B bomba · P pausa</div>
 </div>
 
 <div id="overlay">
@@ -150,7 +167,9 @@ const player = {
   speed: 6,
   cooldown: 0,
   shieldHits: 0, // impactos que el escudo absorbe antes de perder una vida
-  extraLives: 0 // reapareces donde estabas, sin reiniciar la oleada/boss
+  extraLives: 0, // reapareces donde estabas, sin reiniciar la oleada/boss
+  bombs: 0, // se disparan con B; destruyen un bloque de 3x3 enemigos
+  bombCooldown: 0
 };
 
 let keys = {};
@@ -231,6 +250,15 @@ const ITEM_TYPES = {
     onPickup() {
       player.extraLives += 1;
     }
+  },
+  bomb: {
+    label: '💣 Bomba',
+    color: '#ff9900',
+    icon: '💣',
+    weight: 0.5, // aparece poco frecuente, aprox. 1 de cada 10 items
+    onPickup() {
+      player.bombs += 1;
+    }
   }
 };
 
@@ -252,6 +280,21 @@ const ICE_BULLET_SPEED = NORMAL_BULLET_SPEED;
 
 let activeEffects = {}; // efectos activos del jugador, keyed por id de item
 let fallingItems = []; // items cayendo, esperando a ser recogidos
+let bombBannerTimer = 0; // frames restantes mostrando "¡BOMBA LEGENDARIA!"
+
+function showBombBanner() {
+  bombBannerTimer = 90; // ~1.5s a 60fps
+}
+
+function updateBombBanner() {
+  const el = document.getElementById('bombBanner');
+  if (bombBannerTimer > 0) {
+    bombBannerTimer--;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
 
 // Selección ponderada: cada item pesa 1 salvo que declare `weight` (ej. la
 // vida extra, que debe caer con menos frecuencia que el resto).
@@ -311,6 +354,14 @@ function freezeAlien(a) {
       n.frozen = true;
     }
   });
+}
+
+// Bomba: destruye el enemigo impactado y a los 8 que lo rodean en un
+// bloque de 3x3 (2 al lado, 3 arriba, 3 abajo, más el propio impacto)
+function detonateBomb(hitAlien) {
+  aliens
+    .filter(a => a.alive && Math.abs(a.row - hitAlien.row) <= 1 && Math.abs(a.col - hitAlien.col) <= 1)
+    .forEach(a => killAlien(a));
 }
 
 function buildAliens() {
@@ -476,6 +527,8 @@ function resetGame() {
   player.x = W/2 - player.w/2;
   player.shieldHits = 0;
   player.extraLives = 0;
+  player.bombs = 0;
+  player.bombCooldown = 0;
   playerBullets = [];
   alienBullets = [];
   activeEffects = {};
@@ -555,6 +608,18 @@ function update() {
       });
     }
     player.cooldown = 15;
+  }
+
+  // bomba (tecla B): destruye un bloque de 3x3 enemigos alrededor del impacto
+  if (player.bombCooldown > 0) player.bombCooldown--;
+  if (keys['KeyB'] && player.bombCooldown <= 0 && player.bombs > 0) {
+    player.bombs--;
+    playerBullets.push({
+      x: player.x + player.w/2 - 8, y: player.y, w: 16, h: 16,
+      vy: 7, dmg: 0, fire: false, ice: false, bomb: true, pierceLeft: 1
+    });
+    player.bombCooldown = 40;
+    showBombBanner();
   }
 
   // move bullets
@@ -661,7 +726,9 @@ function update() {
       if (!a.alive || b.hit || b.hitAliens.has(a)) return;
       if (rectHit(b, a)) {
         b.hitAliens.add(a);
-        if (a.frozen) {
+        if (b.bomb) {
+          detonateBomb(a);
+        } else if (a.frozen) {
           // un enemigo ya congelado se rompe y muere con cualquier impacto
           killAlien(a);
         } else if (b.ice) {
@@ -689,7 +756,9 @@ function update() {
       if (!b.hitAliens) b.hitAliens = new Set();
       if (b.hitAliens.has(boss) || !rectHit(b, boss)) return;
       b.hitAliens.add(boss);
-      if (b.ice) {
+      if (b.bomb) {
+        boss.hp -= 9; // la bomba equivale a los 9 enemigos que destruiría en la oleada
+      } else if (b.ice) {
         boss.slowTimer = BOSS_SLOW_DURATION;
         if (boss.iceArmed) {
           boss.hp -= 2;
@@ -834,8 +903,15 @@ function draw() {
 
   // player bullets
   playerBullets.forEach(b => {
-    ctx.fillStyle = b.fire ? '#ff6600' : (b.ice ? '#33aaff' : '#0ff');
-    ctx.fillRect(b.x, b.y, b.w, b.h);
+    if (b.bomb) {
+      ctx.font = (b.w) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('💣', b.x + b.w/2, b.y + b.h/2);
+    } else {
+      ctx.fillStyle = b.fire ? '#ff6600' : (b.ice ? '#33aaff' : '#0ff');
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    }
   });
 
   // alien bullets
@@ -864,6 +940,7 @@ function draw() {
 
   updatePowerupHud();
   updateStatusBar();
+  updateBombBanner();
 }
 
 function drawFallingItem(item) {
@@ -908,6 +985,7 @@ function updateStatusBar() {
   const parts = [];
   if (player.shieldHits > 0) parts.push('🛡️ Escudo x' + player.shieldHits);
   if (player.extraLives > 0) parts.push('❤️ Vidas extra x' + player.extraLives);
+  if (player.bombs > 0) parts.push('💣 Bombas x' + player.bombs);
   if (parts.length === 0) {
     el.style.display = 'none';
     return;
