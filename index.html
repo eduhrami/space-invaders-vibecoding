@@ -266,7 +266,7 @@ const ITEM_TYPES = {
     label: '🔫 Ametralladora',
     color: '#ffee00',
     icon: '🔫',
-    duration: 1800, // 30s a 60fps
+    duration: 480, // 8s a 60fps
     onPickup(effects, def) {
       effects.machineGun = { timeLeft: def.duration, label: def.label };
     }
