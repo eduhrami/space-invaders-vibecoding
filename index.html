@@ -278,8 +278,16 @@ const FIRE_MAX_STACKS = 8; // tope de disparos simultáneos por acumular items d
 // ven azules; un segundo impacto sobre un enemigo congelado lo elimina.
 const ICE_BULLET_SPEED = NORMAL_BULLET_SPEED;
 
+// La bomba vuela como un misil: más lenta y más grande que las balas
+// normales, deja una estela de humo y explota al impactar.
+const BOMB_BULLET_SPEED = 4;
+const BOMB_BULLET_W = 14;
+const BOMB_BULLET_H = 32;
+
 let activeEffects = {}; // efectos activos del jugador, keyed por id de item
 let fallingItems = []; // items cayendo, esperando a ser recogidos
+let smokeParticles = []; // estela de humo detrás del misil
+let explosions = []; // destellos de explosión al impactar
 let bombBannerTimer = 0; // frames restantes mostrando "¡BOMBA LEGENDARIA!"
 
 function showBombBanner() {
@@ -362,6 +370,10 @@ function detonateBomb(hitAlien) {
   aliens
     .filter(a => a.alive && Math.abs(a.row - hitAlien.row) <= 1 && Math.abs(a.col - hitAlien.col) <= 1)
     .forEach(a => killAlien(a));
+}
+
+function spawnExplosion(x, y) {
+  explosions.push({ x, y, timer: 0, maxTimer: 24 });
 }
 
 function buildAliens() {
@@ -532,6 +544,8 @@ function resetGame() {
   playerBullets = [];
   alienBullets = [];
   activeEffects = {};
+  smokeParticles = [];
+  explosions = [];
   buildAliens();
   buildBarriers();
   updateHud();
@@ -615,19 +629,41 @@ function update() {
   if (keys['KeyB'] && player.bombCooldown <= 0 && player.bombs > 0) {
     player.bombs--;
     playerBullets.push({
-      x: player.x + player.w/2 - 8, y: player.y, w: 16, h: 16,
-      vy: 7, dmg: 0, fire: false, ice: false, bomb: true, pierceLeft: 1
+      x: player.x + player.w/2 - BOMB_BULLET_W/2, y: player.y, w: BOMB_BULLET_W, h: BOMB_BULLET_H,
+      vy: BOMB_BULLET_SPEED, dmg: 0, fire: false, ice: false, bomb: true, pierceLeft: 1
     });
     player.bombCooldown = 40;
     showBombBanner();
   }
 
   // move bullets
-  playerBullets.forEach(b => b.y -= b.vy);
+  playerBullets.forEach(b => {
+    b.y -= b.vy;
+    if (b.bomb) {
+      smokeParticles.push({
+        x: b.x + b.w/2 + (Math.random() - 0.5) * b.w * 0.4,
+        y: b.y + b.h * 0.85,
+        alpha: 0.55,
+        size: 4 + Math.random() * 3
+      });
+    }
+  });
   playerBullets = playerBullets.filter(b => b.y + b.h > 0);
 
   alienBullets.forEach(b => b.y += 5 + level*0.3);
   alienBullets = alienBullets.filter(b => b.y < H);
+
+  // estela de humo: se desvanece y se expande poco a poco
+  smokeParticles.forEach(p => {
+    p.alpha -= 0.02;
+    p.size += 0.15;
+    p.y += 0.3;
+  });
+  smokeParticles = smokeParticles.filter(p => p.alpha > 0);
+
+  // destello de explosión al impactar la bomba
+  explosions.forEach(e => e.timer++);
+  explosions = explosions.filter(e => e.timer < e.maxTimer);
 
   // items sorpresa cayendo
   fallingItems.forEach(item => {
@@ -727,6 +763,7 @@ function update() {
       if (rectHit(b, a)) {
         b.hitAliens.add(a);
         if (b.bomb) {
+          spawnExplosion(b.x + b.w/2, b.y + b.h/2);
           detonateBomb(a);
         } else if (a.frozen) {
           // un enemigo ya congelado se rompe y muere con cualquier impacto
@@ -757,6 +794,7 @@ function update() {
       if (b.hitAliens.has(boss) || !rectHit(b, boss)) return;
       b.hitAliens.add(boss);
       if (b.bomb) {
+        spawnExplosion(b.x + b.w/2, b.y + b.h/2);
         boss.hp -= 9; // la bomba equivale a los 9 enemigos que destruiría en la oleada
       } else if (b.ice) {
         boss.slowTimer = BOSS_SLOW_DURATION;
@@ -901,13 +939,13 @@ function draw() {
   // player
   drawPlayer();
 
+  // estela de humo del misil, detrás de todo lo demás
+  drawSmoke();
+
   // player bullets
   playerBullets.forEach(b => {
     if (b.bomb) {
-      ctx.font = (b.w) + 'px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('💣', b.x + b.w/2, b.y + b.h/2);
+      drawBombMissile(b);
     } else {
       ctx.fillStyle = b.fire ? '#ff6600' : (b.ice ? '#33aaff' : '#0ff');
       ctx.fillRect(b.x, b.y, b.w, b.h);
@@ -938,9 +976,95 @@ function draw() {
     });
   });
 
+  // explosiones de la bomba, siempre encima de todo lo demás
+  drawExplosions();
+
   updatePowerupHud();
   updateStatusBar();
   updateBombBanner();
+}
+
+function drawSmoke() {
+  smokeParticles.forEach(p => {
+    ctx.globalAlpha = Math.max(0, p.alpha);
+    ctx.fillStyle = '#999';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function drawBombMissile(b) {
+  const cx = b.x + b.w/2, cy = b.y + b.h/2;
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  // llama de salida (parpadea)
+  ctx.fillStyle = Math.random() > 0.5 ? '#ffaa00' : '#ff5500';
+  ctx.beginPath();
+  ctx.moveTo(-b.w*0.25, b.h/2);
+  ctx.lineTo(b.w*0.25, b.h/2);
+  ctx.lineTo(0, b.h/2 + b.w*0.8 + Math.random()*4);
+  ctx.closePath();
+  ctx.fill();
+
+  // cuerpo del misil (punta arriba, cola abajo)
+  ctx.fillStyle = '#cc4400';
+  ctx.beginPath();
+  ctx.moveTo(0, -b.h/2);
+  ctx.lineTo(b.w/2, -b.h/2 + b.w*0.9);
+  ctx.lineTo(b.w/2, b.h/2 - b.w*0.3);
+  ctx.lineTo(0, b.h/2);
+  ctx.lineTo(-b.w/2, b.h/2 - b.w*0.3);
+  ctx.lineTo(-b.w/2, -b.h/2 + b.w*0.9);
+  ctx.closePath();
+  ctx.fill();
+
+  // franja
+  ctx.fillStyle = '#ffcc00';
+  ctx.fillRect(-b.w*0.15, -b.h*0.1, b.w*0.3, b.h*0.3);
+
+  // aletas traseras
+  ctx.fillStyle = '#992200';
+  ctx.beginPath();
+  ctx.moveTo(-b.w/2, b.h/2 - b.w*0.3);
+  ctx.lineTo(-b.w*0.9, b.h/2);
+  ctx.lineTo(-b.w/2, b.h/2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(b.w/2, b.h/2 - b.w*0.3);
+  ctx.lineTo(b.w*0.9, b.h/2);
+  ctx.lineTo(b.w/2, b.h/2);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawExplosions() {
+  explosions.forEach(e => {
+    const t = e.timer / e.maxTimer; // 0..1
+    const radius = 8 + t*40;
+    ctx.save();
+    ctx.globalAlpha = 1 - t;
+    ctx.fillStyle = '#ffcc00';
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, radius*0.55, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = '#ff6600';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, radius, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.strokeStyle = '#ff2200';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, radius*1.3, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  });
 }
 
 function drawFallingItem(item) {
