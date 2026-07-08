@@ -7,6 +7,13 @@ Este proyecto tiene dos partes que conviven en la misma conversación de origen:
 
 Este archivo es el punto de partida para retomar cualquiera de las dos cosas en una sesión nueva.
 
+## Repositorio y hosting
+
+- GitHub: `https://github.com/eduhrami/space-invaders-vibecoding` (público, remoto `origin`, rama `master`).
+- GitHub Pages activado sirviendo la raíz de `master` — cualquier `git push` a `master` actualiza ambas URLs en un par de minutos:
+  - Juego: `https://eduhrami.github.io/space-invaders-vibecoding/`
+  - Manual del taller: `https://eduhrami.github.io/space-invaders-vibecoding/taller/manual.html`
+
 ## Cómo probar el juego
 
 - Todo vive en `index.html` (HTML + CSS + JS inline). No hay build, ni dependencias, ni servidor.
