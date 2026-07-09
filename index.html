@@ -774,7 +774,9 @@ function update() {
   if (keys['Space'] && player.cooldown <= 0) {
     const fireActive = !!activeEffects.fireBullet;
     const iceActive = !fireActive && !!activeEffects.iceBullet;
-    const machineGunActive = !fireActive && !iceActive && !!activeEffects.machineGun;
+    // la ametralladora es un modificador de cadencia: se combina con fuego/hielo
+    // en vez de competir por el turno de disparo (ametralladora de fuego, de hielo, etc.)
+    const machineGunActive = !!activeEffects.machineGun;
     // cada item de fuego acumulado dispara una bala de fuego más en abanico
     const shots = fireActive ? activeEffects.fireBullet.stacks : 1;
     for (let i = 0; i < shots; i++) {
