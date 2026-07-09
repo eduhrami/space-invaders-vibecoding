@@ -200,6 +200,7 @@ const alienCols = 10;
 const alienW = 30, alienH = 20, alienPad = 12;
 const alienColors = ['#ff5555', '#ffaa00', '#ffff55', '#55ff55', '#55aaff'];
 const ALIEN_HP = NORMAL_BULLET_DMG; // un disparo normal siempre mata en un golpe
+let rowCleared = []; // marca por fila si ya soltó su item de bonus
 
 // --- Sistema de items sorpresa (power-ups) ---
 // Cada entrada define cómo se ve el item al caer y qué efecto aplica al
@@ -328,13 +329,31 @@ function pickRandomItemType() {
   return entries[entries.length - 1][0];
 }
 
-function spawnItemAt(cx, cy, typeId) {
+function spawnItemAt(cx, cy) {
   fallingItems.push({
     x: cx - 12, y: cy - 12, w: 24, h: 24,
     vy: 2.2,
     spin: 0,
-    typeId: typeId || pickRandomItemType()
+    typeId: pickRandomItemType()
   });
+}
+
+function spawnItemDrop(rowAliens) {
+  const avgX = rowAliens.reduce((sum, a) => sum + a.x + a.w / 2, 0) / rowAliens.length;
+  const y = rowAliens[0].y;
+  spawnItemAt(avgX, y + 12);
+}
+
+// El bonus cae apenas se elimina la mitad de una fila (no hace falta limpiarla entera)
+function checkRowClear(row) {
+  if (rowCleared[row]) return;
+  const rowAliens = aliens.filter(a => a.row === row);
+  if (rowAliens.length === 0) return;
+  const deadCount = rowAliens.filter(a => !a.alive).length;
+  if (deadCount >= Math.ceil(rowAliens.length / 2)) {
+    rowCleared[row] = true;
+    spawnItemDrop(rowAliens);
+  }
 }
 
 function killAlien(a) {
@@ -344,9 +363,7 @@ function killAlien(a) {
   a.frozen = false;
   score += (alienRows - a.row) * 10;
   updateHud();
-  // cada fila tiene un único enemigo "portador" (asignado al armar la oleada);
-  // el bonus solo cae si el que muere es justo ese, no por contar bajas de la fila
-  if (a.itemDrop) spawnItemAt(a.x + a.w/2, a.y + a.h/2, a.itemDrop);
+  checkRowClear(a.row);
 }
 
 // Congela al enemigo golpeado y a sus vecinos inmediatos en la misma fila
@@ -388,19 +405,13 @@ function buildAliens() {
         burning: false,
         burnTimer: 0,
         burnTicksLeft: 0,
-        frozen: false,
-        itemDrop: null // se asigna abajo: un enemigo al azar por fila lo lleva escondido
+        frozen: false
       });
     }
   }
-  // un portador aleatorio por fila; nadie lo sabe hasta que ese enemigo muere
-  for (let r = 0; r < alienRows; r++) {
-    const rowAliens = aliens.filter(a => a.row === r);
-    const carrier = rowAliens[Math.floor(Math.random() * rowAliens.length)];
-    carrier.itemDrop = pickRandomItemType();
-  }
   alienDir = 1;
   alienSpeed = 1 + (level - 1) * 0.15; // curva suave pensada para una campaña de 20 niveles
+  rowCleared = new Array(alienRows).fill(false);
   fallingItems = [];
   boss = null;
 }
