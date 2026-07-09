@@ -82,10 +82,18 @@ Si en algún momento se perdiera la copia local y hiciera falta partir del HTML 
 
 ## Ideas mencionadas pero no implementadas (backlog)
 
-- Sonido / efectos generados por código (mencionado en el manual como reto "más avanzado").
 - Modo difícil seleccionable desde el menú.
 - Modo de dos jugadores compartiendo teclado.
 - Más items sorpresa siguiendo el patrón de `ITEM_TYPES` (el sistema ya está preparado para esto).
+- Efectos de sonido puntuales (disparo, explosión, golpe) — hoy solo hay música de fondo, ver sección de audio abajo.
+
+## Audio (música de fondo generada por código)
+
+- Sin archivos externos: todo con Web Audio API (`AudioContext`, osciladores). Se arranca dentro de `startGame(theme)` (línea ~590), porque los navegadores exigen un gesto del usuario para iniciar audio.
+- `startNatureMusic()` (insectos): melodía pentatónica suave (`NATURE_SCALE`/`NATURE_MELODY`) sobre un drone grave, con un "grillo" agudo aleatorio de vez en cuando (`playChirp`).
+- `startHorrorMusic()` (monstruos): drone grave con vibrato lento (LFO en la frecuencia) más una segunda voz a distancia de tritono que entra y sale, y un "stinger" ocasional (`playStinger`).
+- `stopMusic()` frena y limpia los osciladores sostenidos (`musicNodes`) antes de arrancar la otra pista — se llama automáticamente al elegir tema, incluida la revancha después de game over/victoria.
+- Tecla **M** alterna silencio (`toggleMusicMute()`), afecta un único `GainNode` maestro (`musicGain`).
 
 ## Historial de commits (más antiguo primero)
 
