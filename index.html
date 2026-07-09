@@ -127,7 +127,7 @@
   <div id="bombBanner">¡BOMBA LEGENDARIA!</div>
   <div id="powerupBar"></div>
   <div id="statusBar"></div>
-  <div id="hint">← → mover · ESPACIO disparar · B bomba · P pausa · M silenciar música</div>
+  <div id="hint">← → mover · ESPACIO disparar · B bomba · P pausa</div>
 </div>
 
 <div id="overlay">
@@ -592,6 +592,9 @@ function hideOverlay() {
 // Una melodía tranquila de naturaleza para insectos, un drone disonante de
 // terror para monstruos. Se arma dentro del click de "elegir tema" porque
 // los navegadores exigen un gesto del usuario para arrancar el audio.
+// Desactivada por ahora (se van a probar canciones reales antes de integrarlas);
+// el código queda listo para reactivarse cambiando esta constante a true.
+const MUSIC_ENABLED = false;
 let audioCtx = null;
 let musicGain = null;
 let musicMuted = false;
@@ -744,9 +747,11 @@ function startGame(theme) {
   resetGame();
   state = 'playing';
   hideOverlay();
-  ensureAudio();
-  if (theme === 'insects') startNatureMusic();
-  else startHorrorMusic();
+  if (MUSIC_ENABLED) {
+    ensureAudio();
+    if (theme === 'insects') startNatureMusic();
+    else startHorrorMusic();
+  }
 }
 
 btnInsects.addEventListener('click', () => startGame('insects'));
